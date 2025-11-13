@@ -1,0 +1,110 @@
+import java.io.*;
+import java.nio.file.*;
+import java.security.*;
+import java.util.*;
+
+public class FileIntegrityMonitor {
+
+    private static final String BASELINE_FILE = "baseline.txt";
+
+    public static void main(String[] args) throws Exception {
+        Scanner scanner = new Scanner(System.in);
+        System.out.print("\u001B[36mEnter directory path to monitor: \u001B[0m");
+        String directoryPath = scanner.nextLine();
+        Path dir = Paths.get(directoryPath);
+
+        if (!Files.exists(dir) || !Files.isDirectory(dir)) {
+            System.out.println("\u001B[31mInvalid directory!\u001B[0m");
+            return;
+        }
+
+        if (!Files.exists(Paths.get(BASELINE_FILE))) {
+            System.out.println("\u001B[33mCreating baseline...\u001B[0m");
+            Map<String, String> fileHashes = generateHashes(dir);
+            saveBaseline(fileHashes);
+            System.out.println("\u001B[32mBaseline created successfully!\u001B[0m");
+        } else {
+            System.out.println("\u001B[34mChecking for file integrity...\u001B[0m");
+            Map<String, String> oldHashes = loadBaseline();
+            Map<String, String> newHashes = generateHashes(dir);
+            compareHashes(oldHashes, newHashes);
+        }
+    }
+
+    private static Map<String, String> generateHashes(Path dir) throws Exception {
+        Map<String, String> hashes = new HashMap<>();
+        Files.walk(dir)
+                .filter(Files::isRegularFile)
+                .forEach(path -> {
+                    try {
+                        hashes.put(path.toString(), getFileHash(path));
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                });
+        return hashes;
+    }
+
+    private static String getFileHash(Path file) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (InputStream fis = Files.newInputStream(file)) {
+            byte[] buffer = new byte[1024];
+            int bytesRead;
+            while ((bytesRead = fis.read(buffer)) != -1) {
+                digest.update(buffer, 0, bytesRead);
+            }
+        }
+        byte[] hashBytes = digest.digest();
+        StringBuilder sb = new StringBuilder();
+        for (byte b : hashBytes)
+            sb.append(String.format("%02x", b));
+        return sb.toString();
+    }
+
+    private static void saveBaseline(Map<String, String> fileHashes) throws IOException {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(BASELINE_FILE))) {
+            for (Map.Entry<String, String> entry : fileHashes.entrySet()) {
+                writer.write(entry.getKey() + "=" + entry.getValue());
+                writer.newLine();
+            }
+        }
+    }
+
+    private static Map<String, String> loadBaseline() throws IOException {
+        Map<String, String> hashes = new HashMap<>();
+        try (BufferedReader reader = new BufferedReader(new FileReader(BASELINE_FILE))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String[] parts = line.split("=", 2);
+                if (parts.length == 2)
+                    hashes.put(parts[0], parts[1]);
+            }
+        }
+        return hashes;
+    }
+
+    private static void compareHashes(Map<String, String> oldHashes, Map<String, String> newHashes) {
+        boolean changesDetected = false;
+
+        for (String file : newHashes.keySet()) {
+            if (!oldHashes.containsKey(file)) {
+                System.out.println("\u001B[32m[ADDED]\u001B[0m " + file);
+                changesDetected = true;
+            } else if (!oldHashes.get(file).equals(newHashes.get(file))) {
+                System.out.println("\u001B[33m[MODIFIED]\u001B[0m " + file);
+                changesDetected = true;
+            }
+        }
+
+        for (String file : oldHashes.keySet()) {
+            if (!newHashes.containsKey(file)) {
+                System.out.println("\u001B[31m[DELETED]\u001B[0m " + file);
+                changesDetected = true;
+            }
+        }
+
+        if (!changesDetected) {
+            System.out.println("\u001B[32mNo changes detected. Integrity maintained.\u001B[0m");
+        }
+    }
+}
